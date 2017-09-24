@@ -2,6 +2,8 @@
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
+/* just a very long line just a very long line just a very long line just a very long line just a very long line just a very long line */
+
  /* includes */
 #include <ctype.h>
 #include <errno.h>
@@ -32,16 +34,18 @@ enum key {
 typedef struct erow {
   int  size;
   char *chars;
-} row;
+} erow;
 
 /* data */
 struct configuration {
   int cursor_x;
   int cursor_y;
+  int row_offset;
+  int col_offset;
   int screen_rows;
   int screen_cols;
   int rows;
-  struct erow row;
+  erow *row;
   struct termios original_termios;
 };
 
@@ -186,13 +190,16 @@ int winSize(int *rows, int *cols) {
 
 /* row operations */
 void appendRow(char *s, size_t len) {
-  CONF.row.size  = len;
-  CONF.row.chars = malloc(len + 1);
+  CONF.row = realloc(CONF.row, sizeof(erow) * (CONF.rows + 1));
 
-  memcpy(CONF.row.chars, s, len);
+  int at = CONF.rows;
+  CONF.row[at].size  = len;
+  CONF.row[at].chars = malloc(len + 1);
 
-  CONF.row.chars[len] = '\0';
-  CONF.rows = 1;
+  memcpy(CONF.row[at].chars, s, len);
+
+  CONF.row[at].chars[len] = '\0';
+  CONF.rows++;
 }
 
 /* file io */
@@ -204,15 +211,12 @@ void editorOpen(char *filename) {
   size_t  linecap = '0';
   ssize_t linelen;
 
-  linelen = getline(&line, &linecap, fp);
-
-  if (linelen != -1) {
+  while ((linelen = getline(&line, &linecap, fp)) != -1) {
     while (linelen > 0 && (line[linelen - 1] == '\n' ||
                            line[linelen - 1] == '\r'))
       linelen--;
     appendRow(line, linelen);
   }
-
   free(line);
   fclose(fp);
 }
@@ -224,7 +228,7 @@ void hideCursor(struct abuf *ab) {
 
 void moveCursor(struct abuf *ab) {
   char buf[32];
-  snprintf(buf, sizeof(buf), "\x1b[%d;%d;H", CONF.cursor_y + 1, CONF.cursor_x + 1);
+  snprintf(buf, sizeof(buf), "\x1b[%d;%d;H", (CONF.cursor_y - CONF.row_offset) + 1, (CONF.cursor_x - CONF.col_offset) + 1);
   abufAppend(ab, buf, strlen(buf));
 }
 
@@ -234,7 +238,8 @@ void showCursor(struct abuf *ab) {
 
 void drawRows(struct abuf *ab) {
   for (int y = 0; y < CONF.screen_rows; y++) {
-    if (y >= CONF.rows) {
+    int file_row = y + CONF.row_offset;
+    if (file_row >= CONF.rows) {
       if (CONF.rows == 0 && y == CONF.screen_rows / 2) {
         char welcome[80];
         int welcome_len = snprintf(welcome, sizeof(welcome),
@@ -255,9 +260,10 @@ void drawRows(struct abuf *ab) {
         abufAppend(ab, "~", 1);
       }
     } else {
-      int len = CONF.row.size;
+      int len = CONF.row[file_row].size - CONF.col_offset;
+      if (len < 0) len = 0;
       if (len > CONF.screen_cols) len = CONF.screen_cols;
-      abufAppend(ab, CONF.row.chars, len);
+      abufAppend(ab, &CONF.row[file_row].chars[CONF.col_offset], len);
     }
 
     abufAppend(ab, "\x1b[K", 3);
@@ -266,20 +272,31 @@ void drawRows(struct abuf *ab) {
 }
 
 void updateCursorPos(int key) {
+  erow *row = (CONF.cursor_y >= CONF.rows) ? NULL : &CONF.row[CONF.cursor_y];
+
   switch (key) {
     case ARROW_LEFT:
       if (CONF.cursor_x != 0) CONF.cursor_x--;
+      else if (CONF.cursor_y > 0) {
+        CONF.cursor_y--;
+        CONF.cursor_x = CONF.row[CONF.cursor_y].size;
+      }
       break;
     case ARROW_RIGHT:
-      if (CONF.cursor_x != CONF.screen_cols - 1) CONF.cursor_x++;
+      if (row && CONF.cursor_x < row->size) CONF.cursor_x++;
+      else if (CONF.cursor_x == row->size) {
+        CONF.cursor_y++;
+        CONF.cursor_x = 0;
+      }
       break;
     case PAGE_UP:
     case ARROW_UP:
+      if (CONF.row_offset > 0) CONF.row_offset--;
       if (CONF.cursor_y != 0) CONF.cursor_y--;
       break;
     case PAGE_DOWN:
     case ARROW_DOWN:
-      if (CONF.cursor_y != CONF.screen_rows - 1) CONF.cursor_y++;
+      if (CONF.cursor_y < CONF.rows) CONF.cursor_y++;
       break;
     case HOME:
       CONF.cursor_x = 0;
@@ -288,9 +305,28 @@ void updateCursorPos(int key) {
       CONF.cursor_x = CONF.screen_cols - 1;
       break;
   }
+
+  row = (CONF.cursor_y >= CONF.rows) ? NULL : &CONF.row[CONF.cursor_y];
+  int len = row ? row->size : 0;
+  if (CONF.cursor_x > len) CONF.cursor_x = len;
+}
+
+void scroll() {
+  if (CONF.cursor_y < CONF.row_offset)
+    CONF.row_offset = CONF.row_offset;
+
+  if (CONF.cursor_y >= CONF.row_offset + CONF.screen_rows)
+    CONF.row_offset = CONF.cursor_y - CONF.screen_rows + 1;
+
+  if (CONF.cursor_x < CONF.col_offset)
+    CONF.col_offset = CONF.cursor_x;
+
+  if (CONF.cursor_x > CONF.col_offset + CONF.screen_cols)
+    CONF.col_offset = CONF.cursor_x - CONF.screen_cols + 1;
 }
 
 void render(struct abuf ab) {
+  scroll();
   hideCursor(&ab);
   abufAppend(&ab, "\x1b[H",  3);
   drawRows(&ab);
@@ -331,10 +367,12 @@ void processKeypress() {
 
 /* init */
 void initConf() {
-  CONF.cursor_x = 0;
-  CONF.cursor_y = 0;
-  CONF.rows     = 0;
-  /* CONF.row      = NULL; */
+  CONF.cursor_x   = 0;
+  CONF.cursor_y   = 0;
+  CONF.rows       = 0;
+  CONF.row_offset = 0;
+  CONF.col_offset = 0;
+  CONF.row        = NULL;
 
   if (winSize(&CONF.screen_rows, &CONF.screen_cols) == -1)
     die("init{winSize}");
