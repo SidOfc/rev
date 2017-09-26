@@ -39,15 +39,16 @@ typedef struct row {
 
 /* data */
 struct configuration {
-  int render_x;
-  int cursor_x;
-  int cursor_y;
-  int row_offset;
-  int col_offset;
-  int screen_rows;
-  int screen_cols;
-  int rows;
-  row *row;
+  int  render_x;
+  int  cursor_x;
+  int  cursor_y;
+  int  row_offset;
+  int  col_offset;
+  int  screen_rows;
+  int  screen_cols;
+  int  rows;
+  row  *row;
+  char *filename;
   struct termios original_termios;
 };
 
@@ -246,6 +247,9 @@ void appendRow(char *s, size_t len) {
 
 /* file io */
 void editorOpen(char *filename) {
+  free(CONF.filename);
+  CONF.filename = strdup(filename);
+
   FILE *fp = fopen(filename, "r");
   if (!fp) die("editorOpen:fopen");
 
@@ -259,6 +263,7 @@ void editorOpen(char *filename) {
       linelen--;
     appendRow(line, linelen);
   }
+
   free(line);
   fclose(fp);
 }
@@ -279,8 +284,26 @@ void showCursor(struct abuf *ab) {
 }
 
 void drawStatusBar(struct abuf *ab) {
+  char status[80];
+  char rstatus[80];
+  int  len = snprintf(status, sizeof(status),
+                      " [%.20s] - %d line%s",
+                      CONF.filename ? CONF.filename : "new",
+                      CONF.rows,
+                      CONF.rows != 1 ? "s" : "");
+  int  rlen = snprintf(rstatus, sizeof(rstatus),
+                       "%d:%d | %02.2f%% ",
+                       CONF.cursor_y + 1,
+                       CONF.cursor_x + 1,
+                       100.0 - ((((float) CONF.rows - CONF.cursor_y) / CONF.rows) * 100));
+
+  if (len  > CONF.screen_cols) len  = CONF.screen_cols;
+  if (rlen > CONF.screen_cols) rlen = CONF.screen_cols;
+
   abufAppend(ab, "\x1b[7m", 4);
-  for (int i = 0; i < CONF.screen_cols; i++) abufAppend(ab, " ", 1);
+  abufAppend(ab, status, len);
+  for (int i = len + rlen; i < CONF.screen_cols; i++) abufAppend(ab, " ", 1);
+  abufAppend(ab, rstatus, rlen);
   abufAppend(ab, "\x1b[m", 3);
 }
 
@@ -429,13 +452,14 @@ void processKeypress() {
 
 /* init */
 void initConf() {
+  CONF.filename   = NULL;
+  CONF.row        = NULL;
   CONF.render_x   = 0;
   CONF.cursor_x   = 0;
   CONF.cursor_y   = 0;
   CONF.rows       = 0;
   CONF.row_offset = 0;
   CONF.col_offset = 0;
-  CONF.row        = NULL;
 
   if (winSize(&CONF.screen_rows, &CONF.screen_cols) == -1)
     die("init{winSize}");
