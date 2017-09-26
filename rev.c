@@ -15,6 +15,7 @@
 
 /* defines */
 #define REV_VERSION "0.0.1"
+#define TABSIZE 4
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 enum key {
@@ -29,13 +30,16 @@ enum key {
   PAGE_DOWN
 };
 
-typedef struct erow {
+typedef struct row {
   int  size;
+  int  rsize;
   char *chars;
-} erow;
+  char *render;
+} row;
 
 /* data */
 struct configuration {
+  int render_x;
   int cursor_x;
   int cursor_y;
   int row_offset;
@@ -43,7 +47,7 @@ struct configuration {
   int screen_rows;
   int screen_cols;
   int rows;
-  erow *row;
+  row *row;
   struct termios original_termios;
 };
 
@@ -187,8 +191,43 @@ int winSize(int *rows, int *cols) {
 }
 
 /* row operations */
+int curxToRenx(row *row, int curx) {
+  int rx = 0;
+
+  for (int j = 0; j < curx; j++) {
+    if (row->chars[j] == '\t') rx += (TABSIZE - 1) - (rx % TABSIZE);
+    rx++;
+  }
+
+  return rx;
+}
+
+void updateRow(row *row) {
+  int idx  = 0;
+  int tabs = 0;
+
+  for (int j = 0; j < row->size; j++) if (row->chars[j] == '\t') tabs++;
+
+  free(row->render);
+  row->render = malloc(row->size + tabs * (TABSIZE - 1) + 1);
+
+  for (int i = 0; i < row->size; i++) {
+    switch (row->chars[i]) {
+      case '\t':
+        for (int l = 0; l < TABSIZE; l++) row->render[idx++] = ' ';
+        break;
+      default:
+        row->render[idx++] = row->chars[i];
+        break;
+    }
+  }
+
+  row->render[idx] = '\0';
+  row->rsize = idx;
+}
+
 void appendRow(char *s, size_t len) {
-  CONF.row = realloc(CONF.row, sizeof(erow) * (CONF.rows + 1));
+  CONF.row = realloc(CONF.row, sizeof(row) * (CONF.rows + 1));
 
   int at = CONF.rows;
   CONF.row[at].size  = len;
@@ -197,6 +236,11 @@ void appendRow(char *s, size_t len) {
   memcpy(CONF.row[at].chars, s, len);
 
   CONF.row[at].chars[len] = '\0';
+  CONF.row[at].rsize = 0;
+  CONF.row[at].render = NULL;
+
+  updateRow(&CONF.row[at]);
+
   CONF.rows++;
 }
 
@@ -226,7 +270,7 @@ void hideCursor(struct abuf *ab) {
 
 void moveCursor(struct abuf *ab) {
   char buf[32];
-  snprintf(buf, sizeof(buf), "\x1b[%d;%d;H", (CONF.cursor_y - CONF.row_offset) + 1, (CONF.cursor_x - CONF.col_offset) + 1);
+  snprintf(buf, sizeof(buf), "\x1b[%d;%d;H", (CONF.cursor_y - CONF.row_offset) + 1, (CONF.render_x - CONF.col_offset) + 1);
   abufAppend(ab, buf, strlen(buf));
 }
 
@@ -254,14 +298,14 @@ void drawRows(struct abuf *ab) {
         }
 
         abufAppend(ab, welcome, welcome_len);
-      } else {
+      } else if (y < CONF.screen_rows - 1) {
         abufAppend(ab, "~", 1);
       }
     } else {
-      int len = CONF.row[file_row].size - CONF.col_offset;
+      int len = CONF.row[file_row].rsize - CONF.col_offset;
       if (len < 0) len = 0;
       if (len > CONF.screen_cols) len = CONF.screen_cols;
-      abufAppend(ab, &CONF.row[file_row].chars[CONF.col_offset], len);
+      abufAppend(ab, &CONF.row[file_row].render[CONF.col_offset], len);
     }
 
     abufAppend(ab, "\x1b[K", 3);
@@ -270,7 +314,7 @@ void drawRows(struct abuf *ab) {
 }
 
 void updateCursorPos(int key) {
-  erow *row = (CONF.cursor_y >= CONF.rows) ? NULL : &CONF.row[CONF.cursor_y];
+  row *row = (CONF.cursor_y >= CONF.rows) ? NULL : &CONF.row[CONF.cursor_y];
 
   switch (key) {
     case ARROW_LEFT:
@@ -282,7 +326,7 @@ void updateCursorPos(int key) {
       break;
     case ARROW_RIGHT:
       if (row && CONF.cursor_x < row->size) CONF.cursor_x++;
-      else if (CONF.cursor_x == row->size) {
+      else if (CONF.cursor_y != CONF.rows && CONF.cursor_x == row->size) {
         CONF.cursor_y++;
         CONF.cursor_x = 0;
       }
@@ -300,7 +344,7 @@ void updateCursorPos(int key) {
       CONF.cursor_x = 0;
       break;
     case END:
-      CONF.cursor_x = CONF.screen_cols - 1;
+      CONF.cursor_x = CONF.row[CONF.cursor_y].size;
       break;
   }
 
@@ -310,17 +354,22 @@ void updateCursorPos(int key) {
 }
 
 void scroll() {
+  CONF.render_x = 0;
+
+  if (CONF.cursor_y < CONF.rows)
+    CONF.render_x = curxToRenx(&CONF.row[CONF.cursor_y], CONF.cursor_x);
+
   if (CONF.cursor_y < CONF.row_offset)
-    CONF.row_offset = CONF.row_offset;
+    CONF.row_offset = CONF.cursor_y;
 
   if (CONF.cursor_y >= CONF.row_offset + CONF.screen_rows)
     CONF.row_offset = CONF.cursor_y - CONF.screen_rows + 1;
 
-  if (CONF.cursor_x < CONF.col_offset)
-    CONF.col_offset = CONF.cursor_x;
+  if (CONF.render_x < CONF.col_offset)
+    CONF.col_offset = CONF.render_x;
 
-  if (CONF.cursor_x > CONF.col_offset + CONF.screen_cols)
-    CONF.col_offset = CONF.cursor_x - CONF.screen_cols + 1;
+  if (CONF.render_x > CONF.col_offset + CONF.screen_cols)
+    CONF.col_offset = CONF.render_x - CONF.screen_cols + 1;
 }
 
 void render(struct abuf ab) {
@@ -345,13 +394,21 @@ void processKeypress() {
       write(STDOUT_FILENO, "\x1b[H",  3);
       exit(0);
       break;
+
     case PAGE_UP:
     case PAGE_DOWN:
       {
+        CONF.cursor_y = CONF.row_offset;
+        if (c == PAGE_DOWN) {
+          CONF.cursor_y += CONF.screen_rows - 1;
+          if (CONF.cursor_y > CONF.rows) CONF.cursor_y = CONF.rows;
+        }
+
         int dist = CONF.screen_rows;
         while (dist--) updateCursorPos(c);
       }
       break;
+
     case ARROW_LEFT:
     case ARROW_RIGHT:
     case ARROW_UP:
@@ -365,6 +422,7 @@ void processKeypress() {
 
 /* init */
 void initConf() {
+  CONF.render_x   = 0;
   CONF.cursor_x   = 0;
   CONF.cursor_y   = 0;
   CONF.rows       = 0;
