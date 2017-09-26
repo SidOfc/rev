@@ -278,6 +278,12 @@ void showCursor(struct abuf *ab) {
   abufAppend(ab, "\x1b[?25h", 6);
 }
 
+void drawStatusBar(struct abuf *ab) {
+  abufAppend(ab, "\x1b[7m", 4);
+  for (int i = 0; i < CONF.screen_cols; i++) abufAppend(ab, " ", 1);
+  abufAppend(ab, "\x1b[m", 3);
+}
+
 void drawRows(struct abuf *ab) {
   for (int y = 0; y < CONF.screen_rows; y++) {
     int file_row = y + CONF.row_offset;
@@ -309,7 +315,7 @@ void drawRows(struct abuf *ab) {
     }
 
     abufAppend(ab, "\x1b[K", 3);
-    if (y < CONF.screen_rows - 1) abufAppend(ab, "\r\n", 2);
+    abufAppend(ab, "\r\n", 2);
   }
 }
 
@@ -377,6 +383,7 @@ void render(struct abuf ab) {
   hideCursor(&ab);
   abufAppend(&ab, "\x1b[H",  3);
   drawRows(&ab);
+  drawStatusBar(&ab);
   moveCursor(&ab);
   showCursor(&ab);
 
@@ -432,6 +439,8 @@ void initConf() {
 
   if (winSize(&CONF.screen_rows, &CONF.screen_cols) == -1)
     die("init{winSize}");
+
+  CONF.screen_rows -= 1;
 }
 
 int main(int argc, char *argv[]) {
