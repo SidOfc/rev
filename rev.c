@@ -2,8 +2,6 @@
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
-/* just a very long line just a very long line just a very long line just a very long line just a very long line just a very long line */
-
  /* includes */
 #include <ctype.h>
 #include <errno.h>
