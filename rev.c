@@ -279,7 +279,7 @@ void hideCursor(struct abuf *ab) {
 
 void moveCursor(struct abuf *ab) {
   char buf[32];
-  snprintf(buf, sizeof(buf), "\x1b[%d;%d;H", (CONF.cursor_y - CONF.row_offset) + 1, (CONF.render_x - CONF.col_offset) + 1);
+  snprintf(buf, sizeof(buf), "\x1b[%d;%d;H", (CONF.cursor_y - CONF.row_offset), (CONF.render_x - CONF.col_offset));
   abufAppend(ab, buf, strlen(buf));
 }
 
@@ -288,7 +288,6 @@ void showCursor(struct abuf *ab) {
 }
 
 void drawStatusMsg(struct abuf *ab) {
-  abufAppend(ab, "\r\n", 2);
   abufAppend(ab, "\x1b[K", 3);
 
   int len = strlen(CONF.status_msg);
@@ -351,9 +350,7 @@ void drawRows(struct abuf *ab) {
         }
 
         abufAppend(ab, welcome, welcome_len);
-      } else if (y < CONF.screen_rows - 1) {
-        abufAppend(ab, "~", 1);
-      }
+      } else abufAppend(ab, "~", 1);
     } else {
       int len = CONF.row[file_row].rsize - CONF.col_offset;
       if (len < 0) len = 0;
@@ -361,8 +358,7 @@ void drawRows(struct abuf *ab) {
       abufAppend(ab, &CONF.row[file_row].render[CONF.col_offset], len);
     }
 
-    abufAppend(ab, "\x1b[K", 3);
-    abufAppend(ab, "\r\n", 2);
+    abufAppend(ab, "\x1b[K\r\n", 5);
   }
 }
 
@@ -416,13 +412,13 @@ void scroll() {
     CONF.row_offset = CONF.cursor_y;
 
   if (CONF.cursor_y >= CONF.row_offset + CONF.screen_rows)
-    CONF.row_offset = CONF.cursor_y - CONF.screen_rows + 1;
+    CONF.row_offset = CONF.cursor_y - CONF.screen_rows;
 
   if (CONF.render_x < CONF.col_offset)
     CONF.col_offset = CONF.render_x;
 
   if (CONF.render_x > CONF.col_offset + CONF.screen_cols)
-    CONF.col_offset = CONF.render_x - CONF.screen_cols + 1;
+    CONF.col_offset = CONF.render_x - CONF.screen_cols;
 }
 
 void render(struct abuf ab) {
@@ -454,7 +450,7 @@ void processKeypress() {
       {
         CONF.cursor_y = CONF.row_offset;
         if (c == PAGE_DOWN) {
-          CONF.cursor_y += CONF.screen_rows - 1;
+          CONF.cursor_y += CONF.screen_rows;
           if (CONF.cursor_y > CONF.rows) CONF.cursor_y = CONF.rows;
         }
 
