@@ -6,10 +6,12 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <termios.h>
 #include <unistd.h>
 #include <string.h>
+#include <time.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 
@@ -39,16 +41,18 @@ typedef struct row {
 
 /* data */
 struct configuration {
-  int  render_x;
-  int  cursor_x;
-  int  cursor_y;
-  int  row_offset;
-  int  col_offset;
-  int  screen_rows;
-  int  screen_cols;
-  int  rows;
-  row  *row;
-  char *filename;
+  int    render_x;
+  int    cursor_x;
+  int    cursor_y;
+  int    row_offset;
+  int    col_offset;
+  int    screen_rows;
+  int    screen_cols;
+  int    rows;
+  row    *row;
+  char   *filename;
+  char   status_msg[80];
+  time_t status_ts;
   struct termios original_termios;
 };
 
@@ -283,6 +287,25 @@ void showCursor(struct abuf *ab) {
   abufAppend(ab, "\x1b[?25h", 6);
 }
 
+void drawStatusMsg(struct abuf *ab) {
+  abufAppend(ab, "\r\n", 2);
+  abufAppend(ab, "\x1b[K", 3);
+
+  int len = strlen(CONF.status_msg);
+  if (len > CONF.screen_cols) len = CONF.screen_cols;
+  if (len && (time(NULL) - CONF.status_ts) < 5)
+    abufAppend(ab, CONF.status_msg, len);
+}
+
+void setStatusMsg(const char *msg_fmt, ...) {
+  va_list fmt_list;
+
+  va_start(fmt_list, msg_fmt);
+  vsnprintf(CONF.status_msg, sizeof(CONF.status_msg), msg_fmt, fmt_list);
+  va_end(fmt_list);
+  CONF.status_ts = time(NULL);
+}
+
 void drawStatusBar(struct abuf *ab) {
   char status[80];
   char rstatus[80];
@@ -305,6 +328,7 @@ void drawStatusBar(struct abuf *ab) {
   for (int i = len + rlen; i < CONF.screen_cols; i++) abufAppend(ab, " ", 1);
   abufAppend(ab, rstatus, rlen);
   abufAppend(ab, "\x1b[m", 3);
+  drawStatusMsg(ab);
 }
 
 void drawRows(struct abuf *ab) {
@@ -452,19 +476,21 @@ void processKeypress() {
 
 /* init */
 void initConf() {
-  CONF.filename   = NULL;
-  CONF.row        = NULL;
-  CONF.render_x   = 0;
-  CONF.cursor_x   = 0;
-  CONF.cursor_y   = 0;
-  CONF.rows       = 0;
-  CONF.row_offset = 0;
-  CONF.col_offset = 0;
+  CONF.filename      = NULL;
+  CONF.row           = NULL;
+  CONF.render_x      = 0;
+  CONF.cursor_x      = 0;
+  CONF.cursor_y      = 0;
+  CONF.rows          = 0;
+  CONF.row_offset    = 0;
+  CONF.col_offset    = 0;
+  CONF.status_ts     = 0;
+  CONF.status_msg[0] = '\0';
 
   if (winSize(&CONF.screen_rows, &CONF.screen_cols) == -1)
     die("init{winSize}");
 
-  CONF.screen_rows -= 1;
+  CONF.screen_rows -= 2;
 }
 
 int main(int argc, char *argv[]) {
@@ -473,6 +499,8 @@ int main(int argc, char *argv[]) {
   enableRawMode();
   initConf();
   if (argc >= 2) editorOpen(argv[1]);
+
+  setStatusMsg("use <C-q> to quit");
 
   while (1) {
     render(ab);
