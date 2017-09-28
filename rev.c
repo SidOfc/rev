@@ -279,7 +279,7 @@ void hideCursor(struct abuf *ab) {
 
 void moveCursor(struct abuf *ab) {
   char buf[32];
-  snprintf(buf, sizeof(buf), "\x1b[%d;%d;H", (CONF.cursor_y - CONF.row_offset), (CONF.render_x - CONF.col_offset));
+  snprintf(buf, sizeof(buf), "\x1b[%d;%d;H", (CONF.cursor_y - CONF.row_offset - 1) + 1, (CONF.render_x - CONF.col_offset - 1) + 1);
   abufAppend(ab, buf, strlen(buf));
 }
 
@@ -303,6 +303,24 @@ void setStatusMsg(const char *msg_fmt, ...) {
   vsnprintf(CONF.status_msg, sizeof(CONF.status_msg), msg_fmt, fmt_list);
   va_end(fmt_list);
   CONF.status_ts = time(NULL);
+}
+
+void drawDebugStatusBar(struct abuf *ab) {
+  char status[80];
+  int  len = snprintf(status, sizeof(status),
+                      " [cy:%03d] [cx:%03d] [ro:%03d] [co:%03d]",
+                      CONF.cursor_y,
+                      CONF.cursor_x,
+                      CONF.row_offset,
+                      CONF.col_offset);
+
+  if (len  > CONF.screen_cols) len  = CONF.screen_cols;
+
+  abufAppend(ab, "\x1b[7m", 4);
+  abufAppend(ab, status, len);
+  for (int i = len; i < CONF.screen_cols; i++) abufAppend(ab, " ", 1);
+  abufAppend(ab, "\x1b[m", 3);
+  drawStatusMsg(ab);
 }
 
 void drawStatusBar(struct abuf *ab) {
@@ -411,7 +429,7 @@ void scroll() {
   if (CONF.cursor_y < CONF.row_offset)
     CONF.row_offset = CONF.cursor_y;
 
-  if (CONF.cursor_y >= CONF.row_offset + CONF.screen_rows)
+  if (CONF.cursor_y > CONF.row_offset + CONF.screen_rows)
     CONF.row_offset = CONF.cursor_y - CONF.screen_rows;
 
   if (CONF.render_x < CONF.col_offset)
@@ -426,7 +444,8 @@ void render(struct abuf ab) {
   hideCursor(&ab);
   abufAppend(&ab, "\x1b[H",  3);
   drawRows(&ab);
-  drawStatusBar(&ab);
+  /* drawStatusBar(&ab); */
+  drawDebugStatusBar(&ab);
   moveCursor(&ab);
   showCursor(&ab);
 
