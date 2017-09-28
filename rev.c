@@ -21,6 +21,7 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 enum key {
+  BACKSPACE = 127,
   ARROW_UP = 1000,
   ARROW_DOWN,
   ARROW_RIGHT,
@@ -231,6 +232,15 @@ void updateRow(row *row) {
   row->rsize = idx;
 }
 
+void insertChar(row *row, int at, int c) {
+  if (at < 0 || at > row->size) at = row->size;
+  row->chars = realloc(row->chars, row->size + 2);
+  memmove(&row->chars[at + 1], &row->chars[at], row->size - at + 1);
+  row->size++;
+  row->chars[at] = c;
+  updateRow(row);
+}
+
 void appendRow(char *s, size_t len) {
   CONF.row = realloc(CONF.row, sizeof(row) * (CONF.rows + 1));
 
@@ -249,7 +259,13 @@ void appendRow(char *s, size_t len) {
   CONF.rows++;
 }
 
-/* file io */
+/* editor operations */
+void editorInsertChar(int c) {
+  if (CONF.cursor_y == CONF.rows) appendRow("", 0);
+  insertChar(&CONF.row[CONF.cursor_y], CONF.cursor_x, c);
+  CONF.cursor_x++;
+}
+
 void editorOpen(char *filename) {
   free(CONF.filename);
   CONF.filename = strdup(filename);
@@ -464,6 +480,20 @@ void processKeypress() {
       exit(0);
       break;
 
+    case '\x1b':
+      break;
+
+    case '\r':
+      break;
+
+    case BACKSPACE:
+    case CTRL_KEY('h'):
+    case DEL:
+      break;
+
+    case CTRL_KEY('l'):
+      break;
+
     case PAGE_UP:
     case PAGE_DOWN:
       {
@@ -485,6 +515,9 @@ void processKeypress() {
     case HOME:
     case END:
       updateCursorPos(c);
+      break;
+    default:
+      editorInsertChar(c);
       break;
   }
 }
